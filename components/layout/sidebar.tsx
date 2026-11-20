@@ -18,7 +18,8 @@ import {
   Tags,
   LogOut,
   ChevronRight,
-  Globe
+  Globe,
+  KeyRound
 } from "lucide-react"
 import { useAuth } from "@/providers/auth-provider"
 
@@ -50,7 +51,8 @@ const navSections: { title: string; items: NavItem[] }[] = [
     title: "People & Staff",
     items: [
       { label: "Volunteer Crew", href: "/volunteers", icon: Users, roles: ["organizer", "admin"] },
-      { label: "Organizers & Leads", href: "/organizers", icon: Shield, roles: ["admin"] }
+      { label: "Organizers & Leads", href: "/organizers", icon: Shield, roles: ["admin"] },
+      { label: "Password Reset", href: "/admin/password-reset", icon: KeyRound, roles: ["admin"] }
     ]
   },
   {

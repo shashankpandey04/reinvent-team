@@ -9,7 +9,13 @@ import {
   Search,
   X,
   RefreshCw,
-  Crown
+  Crown,
+  KeyRound,
+  Copy,
+  Check,
+  Eye,
+  EyeOff,
+  Sparkles
 } from "lucide-react"
 import { useAuth } from "@/providers/auth-provider"
 import type { Organizer } from "@/types/team"
@@ -24,6 +30,15 @@ export default function OrganizersPage() {
   const [userSearchQuery, setUserSearchQuery] = useState("")
   const [searchResults, setSearchResults] = useState<{ user_id: string; first_name: string; last_name: string; email: string; roles: string[] }[]>([])
   const [searchingUsers, setSearchingUsers] = useState(false)
+
+  // Password reset state
+  const [pwdModalOpen, setPwdModalOpen] = useState(false)
+  const [pwdTargetUser, setPwdTargetUser] = useState<{ id: string; name: string; email: string } | null>(null)
+  const [pwdValue, setPwdValue] = useState("")
+  const [showPwd, setShowPwd] = useState(false)
+  const [copiedPwd, setCopiedPwd] = useState(false)
+  const [pwdSubmitting, setPwdSubmitting] = useState(false)
+
   const [feedback, setFeedback] = useState<{ type: "success" | "error"; text: string } | null>(null)
 
   async function loadOrganizers() {
@@ -119,6 +134,69 @@ export default function OrganizersPage() {
         type: "error",
         text: err instanceof Error ? err.message : "Error updating role"
       })
+    }
+  }
+
+  const openPasswordResetModal = (user: { id: string; name: string; email: string }) => {
+    setPwdTargetUser(user)
+    setPwdValue("")
+    setShowPwd(false)
+    setCopiedPwd(false)
+    setPwdModalOpen(true)
+  }
+
+  const handleGeneratePwd = () => {
+    const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%&*"
+    let pwd = ""
+    for (let i = 0; i < 12; i++) {
+      pwd += chars.charAt(Math.floor(Math.random() * chars.length))
+    }
+    setPwdValue(pwd)
+    setShowPwd(true)
+  }
+
+  const handleCopyPwd = () => {
+    if (!pwdValue) return
+    navigator.clipboard.writeText(pwdValue)
+    setCopiedPwd(true)
+    setTimeout(() => setCopiedPwd(false), 2000)
+  }
+
+  const handlePasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!pwdTargetUser) return
+    if (!pwdValue || pwdValue.length < 6) {
+      setFeedback({ type: "error", text: "Password must be at least 6 characters long." })
+      return
+    }
+
+    setPwdSubmitting(true)
+    try {
+      const res = await fetch(`/api/users/${pwdTargetUser.id}/password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: pwdValue })
+      })
+
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        throw new Error(data.message || "Failed to reset password")
+      }
+
+      setFeedback({
+        type: "success",
+        text: `Password successfully updated for organizer ${pwdTargetUser.name}.`
+      })
+      setPwdModalOpen(false)
+      setPwdTargetUser(null)
+      setPwdValue("")
+    } catch (err) {
+      setFeedback({
+        type: "error",
+        text: err instanceof Error ? err.message : "Error resetting password"
+      })
+    } finally {
+      setPwdSubmitting(false)
     }
   }
 
@@ -278,16 +356,28 @@ export default function OrganizersPage() {
                         </div>
                       </td>
                       <td className="px-5 py-3 text-right">
-                        {isAdmin && !isUserAdmin && (
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveOrganizer(org)}
-                            className="p-1 text-slate-400 hover:text-rose-600 transition"
-                            title="Demote from organizer"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        )}
+                        <div className="flex items-center justify-end gap-2">
+                          {isAdmin && (
+                            <button
+                              type="button"
+                              onClick={() => openPasswordResetModal({ id: org.user_id, name: `${org.first_name} ${org.last_name}`, email: org.email })}
+                              className="p-1 text-slate-400 hover:text-slate-900 transition"
+                              title="Reset Password"
+                            >
+                              <KeyRound className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                          {isAdmin && !isUserAdmin && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveOrganizer(org)}
+                              className="p-1 text-slate-400 hover:text-rose-600 transition"
+                              title="Demote from organizer"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   )
@@ -367,6 +457,98 @@ export default function OrganizersPage() {
                 </div>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* PASSWORD RESET MODAL */}
+      {pwdModalOpen && pwdTargetUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
+          <div className="relative w-full max-w-md border border-slate-200 bg-white p-6 shadow-xl">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+              <h3 className="text-sm font-bold text-slate-950 flex items-center gap-2">
+                <KeyRound className="h-4 w-4 text-slate-700" />
+                <span>Reset Organizer Password</span>
+              </h3>
+              <button
+                type="button"
+                onClick={() => setPwdModalOpen(false)}
+                className="text-slate-400 hover:text-slate-800"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handlePasswordSubmit} className="mt-4 space-y-4 text-xs">
+              <div className="p-3 border border-slate-200 bg-slate-50 space-y-1">
+                <div className="text-[10px] font-mono uppercase text-slate-400">Target Account</div>
+                <div className="font-semibold text-slate-900">{pwdTargetUser.name}</div>
+                <div className="font-mono text-[11px] text-slate-500">{pwdTargetUser.email}</div>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="font-medium text-slate-700">New Password *</label>
+                  <button
+                    type="button"
+                    onClick={handleGeneratePwd}
+                    className="inline-flex items-center gap-1 text-[11px] text-slate-900 font-semibold hover:underline"
+                  >
+                    <Sparkles className="w-3 h-3 text-amber-500" />
+                    <span>Auto-generate</span>
+                  </button>
+                </div>
+
+                <div className="relative">
+                  <input
+                    type={showPwd ? "text" : "password"}
+                    required
+                    minLength={6}
+                    value={pwdValue}
+                    onChange={(e) => setPwdValue(e.target.value)}
+                    placeholder="Enter new password (min 6 chars)..."
+                    className="w-full pl-3 pr-20 py-2 border border-slate-300 bg-white text-slate-950 font-mono text-xs focus:border-slate-900 focus:outline-none"
+                  />
+                  <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                    {pwdValue && (
+                      <button
+                        type="button"
+                        onClick={handleCopyPwd}
+                        className="p-1 text-slate-400 hover:text-slate-800 transition"
+                        title="Copy password"
+                      >
+                        {copiedPwd ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setShowPwd(!showPwd)}
+                      className="p-1 text-slate-400 hover:text-slate-800 transition"
+                      title={showPwd ? "Hide password" : "Show password"}
+                    >
+                      {showPwd ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setPwdModalOpen(false)}
+                  className="px-3.5 py-1.5 border border-slate-300 text-slate-700 hover:bg-slate-50 transition font-medium"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={pwdSubmitting || !pwdValue}
+                  className="px-4 py-1.5 bg-slate-900 text-white font-medium hover:bg-slate-800 transition disabled:opacity-50"
+                >
+                  {pwdSubmitting ? "Updating..." : "Update Password"}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

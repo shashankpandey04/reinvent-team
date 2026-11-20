@@ -8,7 +8,10 @@ import {
   CheckCircle2,
   AlertCircle,
   X,
-  Calendar
+  Calendar,
+  Pencil,
+  Trash2,
+  Power
 } from "lucide-react"
 import type { TicketCategory } from "@/types/team"
 import { useAuth } from "@/providers/auth-provider"
@@ -42,12 +45,13 @@ function formatDateDisplay(iso: string) {
 }
 
 export default function TicketCategoriesPage() {
-  const { isAdmin } = useAuth()
+  const { isAdmin, isOrganizer } = useAuth()
   const [categories, setCategories] = useState<TicketCategory[]>([])
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState("")
 
-  const [modalOpen, setModalOpen] = useState(false)
+  // Create Modal state
+  const [createModalOpen, setCreateModalOpen] = useState(false)
   const [name, setName] = useState("")
   const [description, setDescription] = useState("")
   const [priceInr, setPriceInr] = useState<number | "">("")
@@ -55,6 +59,18 @@ export default function TicketCategoriesPage() {
   const [salesStart, setSalesStart] = useState("")
   const [salesEnd, setSalesEnd] = useState("")
   const [submitting, setSubmitting] = useState(false)
+
+  // Edit Modal state
+  const [editModalOpen, setEditModalOpen] = useState(false)
+  const [editingCategory, setEditingCategory] = useState<TicketCategory | null>(null)
+  const [editName, setEditName] = useState("")
+  const [editDescription, setEditDescription] = useState("")
+  const [editPriceInr, setEditPriceInr] = useState<number | "">("")
+  const [editQuantity, setEditQuantity] = useState<number | "">("")
+  const [editSalesStart, setEditSalesStart] = useState("")
+  const [editSalesEnd, setEditSalesEnd] = useState("")
+  const [editIsActive, setEditIsActive] = useState(true)
+  const [editSubmitting, setEditSubmitting] = useState(false)
 
   const [feedback, setFeedback] = useState<{ type: "success" | "error"; text: string } | null>(null)
 
@@ -77,7 +93,7 @@ export default function TicketCategoriesPage() {
     loadCategories()
   }, [])
 
-  const resetForm = () => {
+  const resetCreateForm = () => {
     setName("")
     setDescription("")
     setPriceInr("")
@@ -89,11 +105,11 @@ export default function TicketCategoriesPage() {
   }
 
   const openCreateModal = () => {
-    resetForm()
-    setModalOpen(true)
+    resetCreateForm()
+    setCreateModalOpen(true)
   }
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!name.trim() || !description.trim()) {
       setFeedback({ type: "error", text: "Please provide a name and description" })
@@ -152,8 +168,8 @@ export default function TicketCategoriesPage() {
       }
 
       setFeedback({ type: "success", text: `Ticket tier "${name}" created successfully.` })
-      setModalOpen(false)
-      resetForm()
+      setCreateModalOpen(false)
+      resetCreateForm()
       await loadCategories()
     } catch (err) {
       setFeedback({
@@ -162,6 +178,156 @@ export default function TicketCategoriesPage() {
       })
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  const openEditModal = (cat: TicketCategory) => {
+    setEditingCategory(cat)
+    setEditName(cat.name)
+    setEditDescription(cat.description || "")
+    setEditPriceInr(cat.price_in_paise / 100)
+    setEditQuantity(cat.quantity)
+    setEditSalesStart(formatDateTimeForInput(cat.sales_start))
+    setEditSalesEnd(formatDateTimeForInput(cat.sales_end))
+    setEditIsActive(cat.is_active)
+    setEditModalOpen(true)
+  }
+
+  const handleEditSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editingCategory) return
+
+    if (!editName.trim() || !editDescription.trim()) {
+      setFeedback({ type: "error", text: "Please provide a name and description" })
+      return
+    }
+
+    const price = editPriceInr === "" ? 0 : Number(editPriceInr)
+    const qty = Number(editQuantity)
+
+    if (isNaN(price) || price < 0) {
+      setFeedback({ type: "error", text: "Price must be 0 (Free) or a positive amount" })
+      return
+    }
+
+    if (isNaN(qty) || qty <= 0) {
+      setFeedback({ type: "error", text: "Ticket quantity must be greater than zero" })
+      return
+    }
+
+    const alreadyClaimed = (editingCategory.quantity_sold || 0) + (editingCategory.quantity_reserved || 0)
+    if (qty < alreadyClaimed) {
+      setFeedback({
+        type: "error",
+        text: `Cannot reduce total quota to ${qty}. ${alreadyClaimed} tickets already sold or reserved.`
+      })
+      return
+    }
+
+    const startDate = new Date(editSalesStart)
+    const endDate = new Date(editSalesEnd)
+
+    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+      setFeedback({ type: "error", text: "Invalid sales start or end date" })
+      return
+    }
+
+    if (endDate <= startDate) {
+      setFeedback({ type: "error", text: "Sales end date must be after sales start date" })
+      return
+    }
+
+    setEditSubmitting(true)
+    setFeedback(null)
+
+    try {
+      const payload = {
+        name: editName.trim(),
+        description: editDescription.trim(),
+        price_in_paise: Math.round(price * 100),
+        quantity: qty,
+        sales_start: startDate.toISOString(),
+        sales_end: endDate.toISOString(),
+        is_active: editIsActive
+      }
+
+      const res = await fetch(`/api/ticket-categories/${editingCategory.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      })
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err.message || "Failed to update ticket tier")
+      }
+
+      setFeedback({ type: "success", text: `Ticket tier "${editName}" updated successfully.` })
+      setEditModalOpen(false)
+      setEditingCategory(null)
+      await loadCategories()
+    } catch (err) {
+      setFeedback({
+        type: "error",
+        text: err instanceof Error ? err.message : "Error updating category"
+      })
+    } finally {
+      setEditSubmitting(false)
+    }
+  }
+
+  const handleToggleActive = async (cat: TicketCategory) => {
+    try {
+      const newStatus = !cat.is_active
+      const res = await fetch(`/api/ticket-categories/${cat.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ is_active: newStatus })
+      })
+
+      if (res.ok) {
+        setFeedback({
+          type: "success",
+          text: `Tier "${cat.name}" is now ${newStatus ? "active and open for sales" : "closed"}.`
+        })
+        await loadCategories()
+      } else {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err.message || "Failed to toggle status")
+      }
+    } catch (err) {
+      setFeedback({
+        type: "error",
+        text: err instanceof Error ? err.message : "Error updating category status"
+      })
+    }
+  }
+
+  const handleDeleteCategory = async (cat: TicketCategory) => {
+    if (!confirm(`Are you sure you want to delete category "${cat.name}"? This action cannot be undone.`)) {
+      return
+    }
+
+    try {
+      const res = await fetch(`/api/ticket-categories/${cat.id}`, {
+        method: "DELETE"
+      })
+
+      if (res.ok) {
+        setFeedback({
+          type: "success",
+          text: `Ticket category "${cat.name}" removed.`
+        })
+        await loadCategories()
+      } else {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err.message || "Failed to delete category")
+      }
+    } catch (err) {
+      setFeedback({
+        type: "error",
+        text: err instanceof Error ? err.message : "Error deleting category"
+      })
     }
   }
 
@@ -272,7 +438,7 @@ export default function TicketCategoriesPage() {
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           placeholder="Search ticket categories by tier name or benefits..."
-          className="w-full pl-10 pr-4 py-2 border border-slate-300 bg-white text-slate-950 placeholder-slate-400 text-xs focus:border-slate-950 focus:outline-none transition"
+          className="w-full pl-10 pr-4 py-2 border border-slate-300 bg-white text-slate-950 placeholder-slate-400 text-xs focus:border-slate-900 focus:outline-none transition"
         />
       </div>
 
@@ -367,30 +533,73 @@ export default function TicketCategoriesPage() {
                 </div>
 
                 <div className="pt-4 mt-4 border-t border-slate-100 flex items-center justify-between font-mono">
-                  {isSoldOut ? (
-                    <span className="px-1.5 py-0.2 text-[10px] font-semibold uppercase bg-rose-50 text-rose-800 border border-rose-200">
-                      Sold Out
-                    </span>
-                  ) : c.is_active ? (
-                    <span className="inline-flex items-center gap-1.5 text-xs text-emerald-800 font-medium">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
-                      Active Sales
-                    </span>
-                  ) : (
-                    <span className="text-xs text-slate-400">Closed</span>
-                  )}
+                  <div className="flex items-center gap-2">
+                    {isSoldOut ? (
+                      <span className="px-1.5 py-0.5 text-[10px] font-semibold uppercase bg-rose-50 text-rose-800 border border-rose-200">
+                        Sold Out
+                      </span>
+                    ) : c.is_active ? (
+                      <span className="inline-flex items-center gap-1.5 text-xs text-emerald-800 font-medium">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
+                        Active Sales
+                      </span>
+                    ) : (
+                      <span className="text-xs text-slate-400">Closed</span>
+                    )}
+                  </div>
 
                   <span className="text-[11px] text-slate-500">
                     {c.quantity - taken} available
                   </span>
                 </div>
+
+                {/* Admin and Organizer Action Buttons */}
+                {(isAdmin || isOrganizer) && (
+                  <div className="pt-3 mt-3 border-t border-slate-100 flex items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleToggleActive(c)}
+                      className={`inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium border transition ${
+                        c.is_active
+                          ? "border-slate-200 text-slate-600 hover:bg-slate-50"
+                          : "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                      }`}
+                      title={c.is_active ? "Close Sales" : "Activate Sales"}
+                    >
+                      <Power className="w-3 h-3" />
+                      <span>{c.is_active ? "Close" : "Open"}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => openEditModal(c)}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium bg-slate-900 text-white hover:bg-slate-800 transition"
+                      title="Edit Category Details"
+                    >
+                      <Pencil className="w-3 h-3" />
+                      <span>Edit Tier</span>
+                    </button>
+
+                    {isAdmin && (
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteCategory(c)}
+                        className="p-1 text-slate-400 hover:text-rose-600 transition"
+                        title="Delete Tier"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             )
           })}
         </div>
       )}
 
-      {modalOpen && (
+      {/* CREATE CATEGORY MODAL */}
+      {createModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
           <div className="relative w-full max-w-lg border border-slate-200 bg-white p-6 shadow-xl">
             <div className="flex items-center justify-between pb-3 border-b border-slate-200">
@@ -398,14 +607,14 @@ export default function TicketCategoriesPage() {
                 Configure New Ticket Tier
               </h2>
               <button
-                onClick={() => setModalOpen(false)}
+                onClick={() => setCreateModalOpen(false)}
                 className="text-slate-400 hover:text-slate-800"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <form onSubmit={handleSubmit} className="mt-4 space-y-4 text-xs">
+            <form onSubmit={handleCreateSubmit} className="mt-4 space-y-4 text-xs">
               <div>
                 <label className="block font-medium text-slate-700 mb-1">
                   Tier Name *
@@ -498,7 +707,7 @@ export default function TicketCategoriesPage() {
               <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-200">
                 <button
                   type="button"
-                  onClick={() => setModalOpen(false)}
+                  onClick={() => setCreateModalOpen(false)}
                   className="px-3.5 py-1.5 border border-slate-300 text-slate-700 hover:bg-slate-50 transition font-medium"
                 >
                   Cancel
@@ -509,6 +718,150 @@ export default function TicketCategoriesPage() {
                   className="px-4 py-1.5 bg-slate-900 text-white font-medium hover:bg-slate-800 transition disabled:opacity-50"
                 >
                   {submitting ? "Publishing..." : "Create Category"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* EDIT CATEGORY MODAL */}
+      {editModalOpen && editingCategory && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
+          <div className="relative w-full max-w-lg border border-slate-200 bg-white p-6 shadow-xl">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200">
+              <h2 className="text-base font-bold text-slate-950 flex items-center gap-2">
+                <Pencil className="w-4 h-4 text-slate-700" />
+                <span>Edit Ticket Category</span>
+              </h2>
+              <button
+                onClick={() => setEditModalOpen(false)}
+                className="text-slate-400 hover:text-slate-800"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleEditSubmit} className="mt-4 space-y-4 text-xs">
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">
+                  Tier Name *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  placeholder="e.g. Student General Pass / VIP All-Access"
+                  className="w-full px-3 py-1.5 border border-slate-300 bg-white text-slate-900 placeholder-slate-400 focus:border-slate-900 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">
+                  Description / Pass Inclusions *
+                </label>
+                <textarea
+                  required
+                  rows={3}
+                  value={editDescription}
+                  onChange={(e) => setEditDescription(e.target.value)}
+                  placeholder="Access to keynote stage, tech workshop kits, meals, conference swag..."
+                  className="w-full px-3 py-1.5 border border-slate-300 bg-white text-slate-900 placeholder-slate-400 focus:border-slate-900 focus:outline-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">
+                    Price in INR (₹) *
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    required
+                    value={editPriceInr}
+                    onChange={(e) => setEditPriceInr(e.target.value === "" ? "" : Number(e.target.value))}
+                    placeholder="e.g. 499 (0 for Free)"
+                    className="w-full px-3 py-1.5 border border-slate-300 bg-white text-slate-900 placeholder-slate-400 focus:border-slate-900 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">
+                    Total Inventory Quantity *
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    required
+                    value={editQuantity}
+                    onChange={(e) => setEditQuantity(e.target.value === "" ? "" : Number(e.target.value))}
+                    placeholder="e.g. 1000"
+                    className="w-full px-3 py-1.5 border border-slate-300 bg-white text-slate-900 placeholder-slate-400 focus:border-slate-900 focus:outline-none"
+                  />
+                  <div className="text-[10px] text-slate-500 mt-1 font-mono">
+                    Already claimed: {(editingCategory.quantity_sold || 0) + (editingCategory.quantity_reserved || 0)}
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">
+                    Sales Start Date *
+                  </label>
+                  <input
+                    type="datetime-local"
+                    required
+                    value={editSalesStart}
+                    onChange={(e) => setEditSalesStart(e.target.value)}
+                    className="w-full px-3 py-1.5 border border-slate-300 bg-white text-slate-900 focus:border-slate-900 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">
+                    Sales End Date *
+                  </label>
+                  <input
+                    type="datetime-local"
+                    required
+                    value={editSalesEnd}
+                    onChange={(e) => setEditSalesEnd(e.target.value)}
+                    className="w-full px-3 py-1.5 border border-slate-300 bg-white text-slate-900 focus:border-slate-900 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 pt-1">
+                <input
+                  type="checkbox"
+                  id="editIsActive"
+                  checked={editIsActive}
+                  onChange={(e) => setEditIsActive(e.target.checked)}
+                  className="rounded border-slate-300 text-slate-900 focus:ring-slate-900 h-4 w-4"
+                />
+                <label htmlFor="editIsActive" className="font-medium text-slate-700 cursor-pointer select-none">
+                  Open for public registration / sales (Active)
+                </label>
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setEditModalOpen(false)}
+                  className="px-3.5 py-1.5 border border-slate-300 text-slate-700 hover:bg-slate-50 transition font-medium"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={editSubmitting}
+                  className="px-4 py-1.5 bg-slate-900 text-white font-medium hover:bg-slate-800 transition disabled:opacity-50"
+                >
+                  {editSubmitting ? "Saving..." : "Save Changes"}
                 </button>
               </div>
             </form>
